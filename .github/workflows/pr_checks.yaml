@@ -1,0 +1,122 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: PR Checks
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'app/**'
+      - 'tests/**'
+      - 'deployment/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
+  push:
+    branches:
+      - main
+
+jobs:
+  lint-and-unit-tests:
+    runs-on: ubuntu-latest
+    env:
+      AEGIS_ENV: test
+      AEGIS_OFFLINE_MODE: "true"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.0.0
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Run Ruff lint check
+        run: uv run ruff check app tests
+
+      - name: Run Ty type check
+        run: uv run ty check app
+
+      - name: Run Codespell check
+        run: uv run codespell app tests README.md
+
+      - name: Run unit tests (schemas, guardrails, DLP, HITL, OTel, Secret Manager)
+        run: uv run pytest tests/unit -v
+
+      - name: Run offline persistence & HITL integration tests
+        run: uv run pytest tests/integration/test_persistence_and_hitl.py -v
+
+  terraform-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform format check
+        run: terraform fmt -check -recursive deployment/terraform
+
+      - name: Validate single-project Terraform
+        working-directory: deployment/terraform/single-project
+        run: |
+          terraform init -backend=false
+          terraform validate
+
+      - name: Validate CI/CD Terraform
+        working-directory: deployment/terraform/cicd
+        run: |
+          terraform init -backend=false
+          terraform validate
+
+  live-gcp-integration-and-eval:
+    runs-on: ubuntu-latest
+    if: ${{ vars.GCP_PROJECT_NUMBER != '' }}
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - id: 'auth'
+        name: 'Authenticate to Google Cloud via WIF'
+        uses: 'google-github-actions/auth@v2'
+        with:
+          workload_identity_provider: 'projects/${{ vars.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/${{ secrets.WIF_POOL_ID }}/providers/${{ secrets.WIF_PROVIDER_ID }}'
+          service_account: '${{ secrets.GCP_SERVICE_ACCOUNT }}'
+          create_credentials_file: true
+          project_id: ${{ vars.CICD_PROJECT_ID }}
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.0.0
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Run live Agent Runtime integration tests
+        run: uv run pytest tests/integration -v

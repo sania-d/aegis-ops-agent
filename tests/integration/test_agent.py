@@ -1,0 +1,65 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Live Vertex AI streaming integration test for the full AegisOps App."""
+
+from google.adk.agents.run_config import RunConfig, StreamingMode
+from google.adk.memory import InMemoryMemoryService
+from google.adk.runners import Runner
+from google.adk.sessions import InMemorySessionService
+from google.genai import types
+
+from app.agent import app
+
+
+def test_agent_stream() -> None:
+    """Verify full AegisOps App streams a valid non-empty response end-to-end."""
+    session_service = InMemorySessionService()
+    memory_service = InMemoryMemoryService()
+
+    session = session_service.create_session_sync(
+        user_id="sre_integration_user", app_name="app"
+    )
+    runner = Runner(
+        app=app,
+        session_service=session_service,
+        memory_service=memory_service,
+    )
+
+    message = types.Content(
+        role="user",
+        parts=[
+            types.Part.from_text(
+                text="Recall historical incident lessons for checkout-api involving sync lock."
+            )
+        ],
+    )
+
+    events = list(
+        runner.run(
+            new_message=message,
+            user_id="sre_integration_user",
+            session_id=session.id,
+            run_config=RunConfig(streaming_mode=StreamingMode.SSE),
+        )
+    )
+    assert len(events) > 0, "Expected at least one ADK event"
+
+    has_text_content = any(
+        event.content
+        and event.content.parts
+        and any(part.text for part in event.content.parts)
+        for event in events
+    )
+    assert has_text_content, "Expected at least one event with text content"
