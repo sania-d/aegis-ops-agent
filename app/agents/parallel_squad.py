@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from google.adk.agents import Agent, ParallelAgent
+from google.adk.tools import FunctionTool
 
 from app.config.models import ModelRouterConfig, ModelTier, get_model_router
 from app.prompts.constitution import (
@@ -37,7 +38,7 @@ def create_parallel_diagnostics_squad(
             "for the impacted microservice."
         ),
         instruction=TELEMETRY_ANALYST_INSTRUCTION,
-        tools=[fetch_service_telemetry_anomalies],
+        tools=[FunctionTool(fetch_service_telemetry_anomalies)],
         output_key="telemetry_findings",
     )
 
@@ -49,7 +50,10 @@ def create_parallel_diagnostics_squad(
             "Audits recent deployment commits and verifies healthy rollback candidates."
         ),
         instruction=DEPLOYMENT_AUDITOR_INSTRUCTION,
-        tools=[correlate_recent_deployments, list_verified_healthy_revisions],
+        tools=[
+            FunctionTool(correlate_recent_deployments),
+            FunctionTool(list_verified_healthy_revisions),
+        ],
         output_key="deployment_findings",
     )
 
@@ -61,7 +65,7 @@ def create_parallel_diagnostics_squad(
             "Retrieves verified SRE runbooks via Vertex AI Search or local vector store."
         ),
         instruction=RUNBOOK_RESEARCHER_INSTRUCTION,
-        tools=[search_verified_runbooks],
+        tools=[FunctionTool(search_verified_runbooks)],
         output_key="runbook_findings",
     )
 

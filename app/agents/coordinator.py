@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from google.adk.agents import Agent
 from google.adk.agents.callback_context import CallbackContext
+from google.adk.tools import FunctionTool
 from google.adk.tools.preload_memory_tool import PreloadMemoryTool
 
-from app.agents.parallel_squad import create_parallel_diagnostics_squad
 from app.agents.postmortem_loop import create_postmortem_refinement_loop
 from app.agents.remediation_pipeline import create_remediation_pipeline
 from app.config.models import ModelRouterConfig, ModelTier, get_model_router
@@ -55,10 +55,9 @@ def create_incident_commander(
         instruction=COORDINATOR_INSTRUCTION,
         tools=[
             PreloadMemoryTool(),
-            recall_historical_incident_lessons,
+            FunctionTool(recall_historical_incident_lessons),
         ],
         sub_agents=[
-            create_parallel_diagnostics_squad(models),
             create_remediation_pipeline(models),
             create_postmortem_refinement_loop(models),
         ],

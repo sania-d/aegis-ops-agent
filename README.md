@@ -24,14 +24,14 @@ flowchart TD
     Runtime --> GlobalPlugins
     GlobalPlugins --> Coord["incident_commander_coordinator\n(LlmAgent · gemini-2.5-flash)"]
 
-    Coord --> Par["parallel_diagnostics_squad (ParallelAgent)"]
+    Coord --> Seq["remediation_pipeline (SequentialAgent: Fan-Out → Fan-In)"]
+    Seq --> Par["Stage 1: parallel_diagnostics_squad (ParallelAgent)"]
     Par --> A1["telemetry_analyst\n(gemini-2.5-flash)"]
     Par --> A2["deployment_change_auditor\n(gemini-2.5-flash)"]
     Par --> A3["runbook_researcher\n(gemini-2.5-flash · Vertex AI Search / Local Vector)"]
 
-    Par --> Seq["remediation_pipeline (SequentialAgent)"]
-    Seq --> B1["root_cause_synthesizer\n(gemini-2.5-pro · RootCauseSynthesis Schema)"]
-    B1 --> B2["mitigation_executor\n(gemini-2.5-pro · Blast Radius + HITL Tools)"]
+    Par --> B1["Stage 2: root_cause_synthesizer\n(gemini-2.5-pro · RootCauseSynthesis Schema)"]
+    B1 --> B2["Stage 3: mitigation_executor\n(gemini-2.5-pro · Blast Radius + HITL Tools)"]
 
     B2 --> HITL{"Human-in-the-Loop Gate\n(ResumabilityConfig + require_confirmation)"}
     HITL -->|Approved| Mut["execute_canary_traffic_rollback /\napply_waf_ip_rate_limit"]
@@ -64,7 +64,7 @@ flowchart TD
 | | **History Compaction** | [`app/agent.py`](app/agent.py) wires both ADK `EventsCompactionConfig(compaction_interval=10, overlap_size=3, token_threshold=12000, event_retention_size=6, summarizer=LlmEventSummarizer(...))` and `ContextCacheConfig(min_tokens=2048, ttl_seconds=1800, cache_intervals=10)`. |
 | | **Persistent Session State** | [`app/memory/session_factory.py`](app/memory/session_factory.py) connects to `VertexAiSessionService` in Managed Agent Runtime and persistent async SQLite `DatabaseSessionService` locally; [`search_verified_runbooks`](app/tools/diagnostics_tools.py) integrates **Vertex AI Search** (`google-cloud-discoveryengine`) with deterministic local vector fallback. |
 | | **Async Memory Operations** | [`app/memory/async_memory.py`](app/memory/async_memory.py) registers `schedule_async_memory_consolidation` as `after_agent_callback`, spawning non-blocking `asyncio.create_task` background jobs that scrub PII via Cloud DLP before persisting lessons to `VertexAiMemoryBankService` / persistent SQLite store (recalled via `PreloadMemoryTool` + `recall_historical_incident_lessons`). |
-| **3. Orchestration & Logic** | **Multi-Agent Patterns** | 4 ADK patterns across [`app/agents/`](app/agents/): Coordinator (`LlmAgent`), `ParallelAgent` (`parallel_diagnostics_squad`), `SequentialAgent` (`remediation_pipeline`), and `LoopAgent` (`postmortem_refinement_loop` with custom `PostmortemEscalationChecker(BaseAgent)`). |
+| **3. Orchestration & Logic** | **Multi-Agent Patterns** | 4 ADK patterns across [`app/agents/`](app/agents/): Coordinator (`LlmAgent`), Fan-Out/Fan-In `SequentialAgent` (`remediation_pipeline`) nesting `ParallelAgent` (`parallel_diagnostics_squad`) → Pro RCA → Pro HITL Executor, and `LoopAgent` (`postmortem_refinement_loop` with custom `PostmortemEscalationChecker(BaseAgent)`). |
 | | **Strategic Model Routing** | [`app/config/models.py`](app/config/models.py) (`ModelRouterConfig`) intentionally routes fast triage/parallel extraction/compaction to `gemini-2.5-flash`, complex causal synthesis/mitigation/postmortem drafting to `gemini-2.5-pro`, and self-eval critique to `gemini-2.5-flash` at `temperature=0.0`. |
 | | **Guardrails & Policy Plugins** | [`app/plugins/guardrails_plugin.py`](app/plugins/guardrails_plugin.py) + [`app/security/model_armor.py`](app/security/model_armor.py): `ModelArmorGuardrailPlugin` (Google Cloud Model Armor screening user prompts, tool outputs against poisoned crash logs, and responses), `PolicySelfEvalPlugin` (groundedness & change-freeze self-eval), and `ReflectAndRetryToolPlugin`. |
 | | **Human-in-the-Loop Hooks** | `ResumabilityConfig(is_resumable=True)` in [`app/agent.py`](app/agent.py) + conditional `FunctionTool(execute_canary_traffic_rollback, require_confirmation=requires_production_rollback_approval)` + unconditional `FunctionTool(apply_waf_ip_rate_limit, require_confirmation=True)` + explicit `tool_context.request_confirmation(...)` in [`app/tools/remediation_tools.py`](app/tools/remediation_tools.py). |
@@ -102,7 +102,8 @@ uv run codespell app tests README.md
 ```bash
 export GOOGLE_CLOUD_PROJECT="sandaw-project-2121"
 export GOOGLE_CLOUD_LOCATION="us-central1"
-agents-cli eval run
+agents-cli eval generate --dataset tests/eval/datasets/aegis_golden_dataset.json --project sandaw-project-2121 --region us-central1
+agents-cli eval grade --config tests/eval/eval_config.yaml --project sandaw-project-2121
 ```
 
 ### 5. Interactive Local Playground (Live Demo)

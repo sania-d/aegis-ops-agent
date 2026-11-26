@@ -41,14 +41,16 @@ def test_multi_agent_patterns_strategic_routing_and_app_configs() -> None:
         "aegis_reflect_retry_plugin",
     }.issubset(plugin_names)
 
-    # Verify Multi-Agent Patterns
+    # Verify Multi-Agent Patterns (Coordinator -> Sequential[Parallel, Pro RCA, Pro Executor] + Loop)
     sub_by_name = {agent.name: agent for agent in root_agent.sub_agents}
-    assert isinstance(sub_by_name["parallel_diagnostics_squad"], ParallelAgent)
     assert isinstance(sub_by_name["remediation_pipeline"], SequentialAgent)
     assert isinstance(sub_by_name["postmortem_refinement_loop"], LoopAgent)
 
+    seq_agents = {a.name: a for a in sub_by_name["remediation_pipeline"].sub_agents}
+    assert isinstance(seq_agents["parallel_diagnostics_squad"], ParallelAgent)
+
     # Verify distinct output_keys on ParallelAgent to prevent race conditions
-    parallel_agents = sub_by_name["parallel_diagnostics_squad"].sub_agents
+    parallel_agents = seq_agents["parallel_diagnostics_squad"].sub_agents
     output_keys = [a.output_key for a in parallel_agents]
     assert len(output_keys) == len(set(output_keys)) == 3
 
@@ -57,8 +59,6 @@ def test_multi_agent_patterns_strategic_routing_and_app_configs() -> None:
     assert router.model_name_for(ModelTier.FAST_TRIAGE) == "gemini-2.5-flash"
     assert router.model_name_for(ModelTier.DEEP_REASONING) == "gemini-2.5-pro"
     assert root_agent.model.model == "gemini-2.5-flash"
-
-    seq_agents = {a.name: a for a in sub_by_name["remediation_pipeline"].sub_agents}
     assert seq_agents["root_cause_synthesizer"].model.model == "gemini-2.5-pro"
     assert seq_agents["mitigation_executor"].model.model == "gemini-2.5-pro"
 
